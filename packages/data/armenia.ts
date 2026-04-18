@@ -1,6 +1,4 @@
-import supabase from "../supabase";
-
-type Region = {
+export type ArmeniaRegionDataset = {
   name: string;
   type: string;
   romanized: string;
@@ -18,7 +16,7 @@ type Region = {
     totalSettlements: string;
   };
 };
-const CAPITAL = {
+export const ARMENIA_CAPITAL = {
   name: "Երևան",
   type: "Մայրաքաղաք",
   romanized: "Yerevan",
@@ -78,75 +76,7 @@ const CAPITAL = {
     isCapital: true,
   },
 };
-
-async function insertCapital() {
-  const countryId = 1;
-
-  // const { data: regionData, error: regionError } = await supabase
-  //   .from("regions")
-  //   .insert([
-  //     {
-  //       country_id: countryId,
-  //       name: CAPITAL.name,
-  //       romanized_name: CAPITAL.romanized,
-  //       created_at: new Date().toISOString(),
-  //       updated_at: new Date().toISOString(),
-  //     },
-  //   ])
-  //   .select("id");
-  //
-  // if (regionError) {
-  //   console.error(`Error inserting region ${CAPITAL.name}:`, regionError);
-  //   return;
-  // }
-
-  const regionId = 11; // regionData[0].id;
-
-  // const { data: capitalData, error: cityError } = await supabase
-  //   .from("settlements")
-  //   .insert([
-  //     {
-  //       region_id: regionId,
-  //       name: CAPITAL.name,
-  //       romanized_name: CAPITAL.romanized,
-  //       type: "city",
-  //       is_capital: true,
-  //       created_at: new Date().toISOString(),
-  //       updated_at: new Date().toISOString(),
-  //     },
-  //   ])
-  //   .select("id");
-  //
-  // if (cityError) {
-  //   console.error(`Error inserting city ${CAPITAL.name}:`, cityError);
-  // }
-
-  const capitalId = 626; // capitalData?.[0].id;
-
-  // Insert Settlements (Cities and Villages) for each Region
-  for (const district of CAPITAL.districts) {
-    const { error: cityError } = await supabase.from("settlements").insert([
-      {
-        region_id: regionId,
-        parent_id: capitalId,
-        name: district.name,
-        romanized_name: district.romanized,
-        type: "district",
-        is_capital: false, // Mark Yerevan as capital
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    ]);
-
-    if (cityError) {
-      console.error(`Error inserting city ${district.name}:`, cityError);
-    }
-  }
-}
-
-insertCapital().then(() => console.log("Capital inserted!"));
-
-export const REGIONS: Region[] = [
+export const REGIONS: ArmeniaRegionDataset[] = [
   {
     name: "Արմավիր",
     type: "Մարզ",
@@ -875,104 +805,3 @@ export const REGIONS: Region[] = [
     metadata: { totalCities: "3", totalVillages: "24", totalSettlements: "27" },
   },
 ];
-
-// Insert Country (Armenia)
-async function insertCountry() {
-  const { data: countryData, error: countryError } = await supabase
-    .from("countries")
-    .insert([{ name: "Հայաստան", romanized_name: "Armenia" }])
-    .select("id");
-
-  if (countryError) {
-    console.error("Error inserting country:", countryError);
-    return;
-  }
-
-  const countryId = countryData[0].id;
-
-  // Insert Regions for Armenia
-  for (const region of REGIONS) {
-    const { data: regionData, error: regionError } = await supabase
-      .from("regions")
-      .insert([
-        {
-          country_id: countryId,
-          name: region.name,
-          romanized_name: region.romanized,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ])
-      .select("id");
-
-    if (regionError) {
-      console.error(`Error inserting region ${region.name}:`, regionError);
-      continue;
-    }
-
-    const regionId = regionData[0].id;
-
-    // Insert Settlements (Cities and Villages) for each Region
-    for (const city of region.cities) {
-      const { error: cityError } = await supabase.from("settlements").insert([
-        {
-          region_id: regionId,
-          name: city.name,
-          romanized_name: city.romanized,
-          type: "city",
-          is_capital: region.name === "Yerevan", // Mark Yerevan as capital
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ]);
-
-      if (cityError) {
-        console.error(`Error inserting city ${city.name}:`, cityError);
-      }
-    }
-
-    for (const village of region.villages) {
-      const { error: villageError } = await supabase
-        .from("settlements")
-        .insert([
-          {
-            region_id: regionId,
-            name: village.name,
-            romanized_name: village.romanized,
-            type: "village",
-            is_capital: false,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-        ]);
-
-      if (villageError) {
-        console.error(`Error inserting village ${village.name}:`, villageError);
-      }
-    }
-
-    // Insert metadata (optional, can be calculated later)
-    const { error: metadataError } = await supabase
-      .from("regions")
-      .update({
-        metadata: {
-          totalCities: region.metadata.totalCities,
-          totalVillages: region.metadata.totalVillages,
-          totalSettlements: region.metadata.totalSettlements,
-        },
-      })
-      .eq("id", regionId);
-
-    if (metadataError) {
-      console.error(
-        `Error updating metadata for region ${region.name}:`,
-        metadataError,
-      );
-    }
-  }
-
-  console.log("Data inserted successfully!");
-}
-
-// Run the function
-// insertCountry().catch(console.error);
