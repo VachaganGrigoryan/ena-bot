@@ -10,3 +10,8 @@ yarn-error.log*
 
 .vscode/*
 .env
+
+# Ignore all files in the dist folder
+dist
+.idea
+.DS_Store
