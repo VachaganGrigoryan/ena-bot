@@ -1,0 +1,77 @@
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  author: Vachagan Grigoryan
+  category: Utilities
+  description:
+    en_us: Telegram bot and worker stack for ENA planned electricity outage tracking with PostgreSQL storage.
+  developer: Vachagan Grigoryan
+  main: telegram-bot
+  tagline:
+    en_us: Track ENA outage updates through Telegram subscriptions.
+  title:
+    en_us: ENA Bot
+  tips:
+    before_install:
+      en_us: |
+        This stack has no web UI.
+
+        Before starting:
+        1. Set `TELEGRAM_TOKEN`
+        2. Review `TELEGRAM_DEFAULT_LOCALE`
+        3. Run the repository migration workflow or `npm run db:push` against the target database at least once
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ena-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: global_outages
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - /DATA/AppData/ena-bot/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d global_outages"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  telegram-bot:
+    image: ghcr.io/vachagangrigoryan/ena-bot-telegram-bot:latest
+    container_name: ena-bot-telegram-bot
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/global_outages
+      TELEGRAM_TOKEN: ""
+      TELEGRAM_DEFAULT_LOCALE: hy-AM
+      ENA_BASE_URL: https://www.ena.am
+      ENA_OUTAGES_PATH: /Info.aspx?id=5
+      NODE_ENV: production
+
+  worker:
+    image: ghcr.io/vachagangrigoryan/ena-bot-worker:latest
+    container_name: ena-bot-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/global_outages
+      TELEGRAM_TOKEN: ""
+      TELEGRAM_DEFAULT_LOCALE: hy-AM
+      ENA_BASE_URL: https://www.ena.am
+      ENA_OUTAGES_PATH: /Info.aspx?id=5
+      WORKER_SYNC_CRON: 0 10,15,20 * * *
+      WORKER_NOTIFY_CRON: "*/15 * * * *"
+      USE_OLLAMA_ADDRESS_FORMATTER: "false"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen2.5:3b
+      NODE_ENV: production
+    extra_hosts:
+      - host.docker.internal:host-gateway
