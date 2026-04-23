@@ -30,13 +30,8 @@ export class SubscriptionsRepository {
     queryText: string;
     matchMode?: MatchMode;
   }) {
-    const provider = await db.query.providers.findFirst({
-      where: and(eq(providers.key, input.providerKey), eq(providers.utilityType, input.utilityType)),
-    });
-
-    if (!provider) {
-      throw new Error(`Provider ${input.providerKey}/${input.utilityType} not found.`);
-    }
+    const provider = await this.ensureProvider(input.providerKey, input.utilityType);
+    const queryText = cleanQueryText(input.queryText);
 
     const [created] = await db
       .insert(subscriptions)
@@ -45,8 +40,8 @@ export class SubscriptionsRepository {
         providerId: provider.id,
         providerKey: input.providerKey,
         utilityType: input.utilityType,
-        queryText: input.queryText,
-        normalizedQueryText: normalizeSearchText(input.queryText),
+        queryText,
+        normalizedQueryText: normalizeSearchText(queryText),
         matchMode: input.matchMode ?? "contains",
       })
       .returning();
@@ -55,11 +50,12 @@ export class SubscriptionsRepository {
   }
 
   async updateQuery(subscriptionId: number, queryText: string) {
+    const cleanQuery = cleanQueryText(queryText);
     const [updated] = await db
       .update(subscriptions)
       .set({
-        queryText,
-        normalizedQueryText: normalizeSearchText(queryText),
+        queryText: cleanQuery,
+        normalizedQueryText: normalizeSearchText(cleanQuery),
         updatedAt: sql`now()`,
       })
       .where(eq(subscriptions.id, subscriptionId))
@@ -110,4 +106,49 @@ export class SubscriptionsRepository {
       .innerJoin(users, eq(users.id, subscriptions.userId))
       .where(eq(subscriptions.isPaused, false));
   }
+
+  private async ensureProvider(providerKey: ProviderKey, utilityType: UtilityType) {
+    const existing = await db.query.providers.findFirst({
+      where: and(eq(providers.key, providerKey), eq(providers.utilityType, utilityType)),
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const [created] = await db
+      .insert(providers)
+      .values({
+        key: providerKey,
+        utilityType,
+        name: providerKey.toUpperCase(),
+      })
+      .onConflictDoNothing({
+        target: [providers.key, providers.utilityType],
+      })
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    const provider = await db.query.providers.findFirst({
+      where: and(eq(providers.key, providerKey), eq(providers.utilityType, utilityType)),
+    });
+
+    if (!provider) {
+      throw new Error(`Provider ${providerKey}/${utilityType} could not be created.`);
+    }
+
+    return provider;
+  }
+}
+
+function cleanQueryText(queryText: string) {
+  const cleanQuery = queryText.replace(/\s+/g, " ").trim();
+  if (!cleanQuery) {
+    throw new Error("Subscription query text is required.");
+  }
+
+  return cleanQuery;
 }

@@ -106,6 +106,10 @@ export class GlobalOutagesService {
 
   async processNotifications(sendMessage: (chatId: string, message: string) => Promise<void>) {
     const subscriptions = await this.subscriptionsRepository.listActive();
+    let matchedSubscriptionCount = 0;
+    let deliveredWindowCount = 0;
+    let failedWindowCount = 0;
+    let sentMessageCount = 0;
 
     for (const subscription of subscriptions) {
       const matches = await this.outagesRepository.findActiveByText(
@@ -118,6 +122,7 @@ export class GlobalOutagesService {
         continue;
       }
 
+      matchedSubscriptionCount += 1;
       const unsentMatches: typeof matches = [];
       for (const match of matches) {
         const alreadySent = await this.notificationDeliveriesRepository.alreadySent(subscription.id, match.windowId);
@@ -135,10 +140,12 @@ export class GlobalOutagesService {
       try {
         for (const message of messages) {
           await sendMessage(subscription.chatId, message);
+          sentMessageCount += 1;
         }
 
         for (const match of unsentMatches) {
           await this.notificationDeliveriesRepository.record(subscription.id, match.windowId, "sent");
+          deliveredWindowCount += 1;
         }
       } catch (error) {
         for (const match of unsentMatches) {
@@ -148,9 +155,18 @@ export class GlobalOutagesService {
             "failed",
             error instanceof Error ? error.message : "Unknown notification error.",
           );
+          failedWindowCount += 1;
         }
       }
     }
+
+    return {
+      activeSubscriptionCount: subscriptions.length,
+      matchedSubscriptionCount,
+      deliveredWindowCount,
+      failedWindowCount,
+      sentMessageCount,
+    };
   }
 
   private async refineBatchAddresses(batch: Awaited<ReturnType<ProviderAdapter["normalize"]>>) {

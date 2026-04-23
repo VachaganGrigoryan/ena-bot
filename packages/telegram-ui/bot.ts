@@ -9,6 +9,7 @@ import { Bot, Context, Keyboard, session, SessionFlavor } from "grammy";
 import { GlobalOutagesService } from "../application/global-outages-service";
 import { env } from "../shared/env";
 import {
+  escapeTelegramMarkdown,
   FIND_PROMPT_TEXT,
   INFO_TEXT,
   MAIN_MENU_LABELS,
@@ -17,7 +18,9 @@ import {
 } from "../shared/text";
 
 type SessionData = Record<string, never>;
-type AppContext = Context & ConversationFlavor & SessionFlavor<SessionData>;
+type BaseContext = Context & SessionFlavor<SessionData>;
+type AppContext = ConversationFlavor<BaseContext>;
+type AppConversation = Conversation<AppContext, AppContext>;
 
 function buildMainKeyboard() {
   return new Keyboard()
@@ -38,13 +41,81 @@ function buildBackKeyboard() {
   return new Keyboard().text(MAIN_MENU_LABELS.cancel).resized();
 }
 
+function normalizeFollowQuery(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function getUpdateType(ctx: Context) {
+  return Object.keys(ctx.update).find((key) => key !== "update_id") ?? "unknown";
+}
+
+function getRequestPath(ctx: Context) {
+  const text = ctx.message?.text?.trim();
+  if (text) {
+    if (text.startsWith("/")) {
+      return text.split(/\s+/)[0] ?? "/unknown";
+    }
+
+    const menuActionMap: Record<string, string> = {
+      [MAIN_MENU_LABELS.find]: "/menu/find",
+      [MAIN_MENU_LABELS.subscriptions]: "/menu/subscriptions",
+      [MAIN_MENU_LABELS.add]: "/menu/subscriptions/add",
+      [MAIN_MENU_LABELS.edit]: "/menu/subscriptions/edit",
+      [MAIN_MENU_LABELS.delete]: "/menu/subscriptions/delete",
+      [MAIN_MENU_LABELS.pause]: "/menu/subscriptions/toggle",
+      [MAIN_MENU_LABELS.info]: "/menu/info",
+      [MAIN_MENU_LABELS.cancel]: "/menu/cancel",
+    };
+
+    return menuActionMap[text] ?? "/message";
+  }
+
+  const callbackData = ctx.callbackQuery?.data;
+  if (callbackData) {
+    return `/callback/${callbackData}`;
+  }
+
+  return `/${getUpdateType(ctx)}`;
+}
+
+function formatActor(ctx: Context) {
+  const username = ctx.from?.username ? `@${ctx.from.username}` : "-";
+  const firstName = ctx.from?.first_name ?? "-";
+  const chatId = ctx.chat?.id?.toString() ?? "-";
+  const userId = ctx.from?.id?.toString() ?? "-";
+
+  return `user=${username} first_name="${firstName}" user_id=${userId} chat_id=${chatId}`;
+}
+
+function formatTelegramRequestLog(ctx: Context) {
+  return `update_id=${ctx.update.update_id} path=${getRequestPath(ctx)} update_type=${getUpdateType(ctx)} ${formatActor(ctx)}`;
+}
+
 export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
   if (!env.TELEGRAM_TOKEN) {
     throw new Error('"TELEGRAM_TOKEN" env var is required to run the Telegram bot.');
   }
 
   const bot = new Bot<AppContext>(env.TELEGRAM_TOKEN);
-  const searchConversation = async (conversation: Conversation<AppContext>, ctx: AppContext) => {
+  bot.use(async (ctx, next) => {
+    const startedAt = Date.now();
+    const requestLog = formatTelegramRequestLog(ctx);
+
+    console.info(`[telegram.request] ${requestLog}`);
+
+    try {
+      await next();
+      console.info(`[telegram.response] ${requestLog} status=ok duration_ms=${Date.now() - startedAt}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[telegram.response] ${requestLog} status=error duration_ms=${Date.now() - startedAt} message="${message}"`,
+      );
+      throw error;
+    }
+  });
+
+  const searchConversation = async (conversation: AppConversation, ctx: AppContext) => {
     await ctx.reply(FIND_PROMPT_TEXT, {
       parse_mode: "Markdown",
       reply_markup: buildBackKeyboard(),
@@ -80,7 +151,7 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
     });
   };
 
-  const addSubscriptionConversation = async (conversation: Conversation<AppContext>, ctx: AppContext) => {
+  const addSubscriptionConversation = async (conversation: AppConversation, ctx: AppContext) => {
     await ctx.reply(SUBSCRIPTION_PROMPT_TEXT, {
       reply_markup: buildBackKeyboard(),
     });
@@ -93,21 +164,29 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
       return;
     }
 
+    const queryText = normalizeFollowQuery(next.message.text);
+    if (!queryText) {
+      await next.reply("Խնդրում եմ ուղարկել հասցե կամ մարզ։", {
+        reply_markup: buildMainKeyboard(),
+      });
+      return;
+    }
+
     const chatId = next.chat.id.toString();
     await globalOutagesService.addSubscription(chatId, next.from?.username, {
       providerKey: "ena",
       utilityType: "electricity",
-      queryText: next.message.text,
+      queryText,
       matchMode: "contains",
     });
 
-    await next.reply(`Հետևումը պահպանվեց․ \`${next.message.text}\``, {
+    await next.reply(`Հետևումը պահպանվեց․ ${escapeTelegramMarkdown(queryText)}`, {
       parse_mode: "Markdown",
       reply_markup: buildMainKeyboard(),
     });
   };
 
-  const editSubscriptionConversation = async (conversation: Conversation<AppContext>, ctx: AppContext) => {
+  const editSubscriptionConversation = async (conversation: AppConversation, ctx: AppContext) => {
     const chatId = ctx.chat?.id?.toString();
 
     if (!chatId) {
@@ -140,7 +219,7 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
 
     const [idPart, ...queryParts] = next.message.text.split(":");
     const subscriptionId = Number.parseInt(idPart.trim(), 10);
-    const queryText = queryParts.join(":").trim();
+    const queryText = normalizeFollowQuery(queryParts.join(":"));
     const target = subscriptions.find((subscription) => subscription.id === subscriptionId);
 
     if (!target || !queryText) {
@@ -156,7 +235,7 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
     });
   };
 
-  const deleteSubscriptionConversation = async (conversation: Conversation<AppContext>, ctx: AppContext) => {
+  const deleteSubscriptionConversation = async (conversation: AppConversation, ctx: AppContext) => {
     const chatId = ctx.chat?.id?.toString();
 
     if (!chatId) {
@@ -199,7 +278,7 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
     });
   };
 
-  const toggleSubscriptionConversation = async (conversation: Conversation<AppContext>, ctx: AppContext) => {
+  const toggleSubscriptionConversation = async (conversation: AppConversation, ctx: AppContext) => {
     const chatId = ctx.chat?.id?.toString();
 
     if (!chatId) {
@@ -294,6 +373,12 @@ export function createTelegramBot(globalOutagesService: GlobalOutagesService) {
     await ctx.reply("Ընտրեք հրամանը հիմնական մենյուից կամ գրեք /start։", {
       reply_markup: buildMainKeyboard(),
     });
+  });
+
+  bot.catch((error) => {
+    const cause = error.error;
+    const message = cause instanceof Error ? cause.stack ?? cause.message : String(cause);
+    console.error(`[telegram.catch] ${formatTelegramRequestLog(error.ctx)} message="${message}"`);
   });
 
   return bot;

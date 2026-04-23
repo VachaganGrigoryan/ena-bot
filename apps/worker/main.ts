@@ -10,6 +10,10 @@ async function main() {
     throw new Error('"TELEGRAM_TOKEN" env var is required to run the worker notification pipeline.');
   }
 
+  console.info(
+    `[worker.startup] provider=ena/electricity sync_cron=${env.WORKER_SYNC_CRON} notify_cron=${env.WORKER_NOTIFY_CRON}`,
+  );
+
   const bot = new Bot(env.TELEGRAM_TOKEN);
   const outagesService = new GlobalOutagesService();
   const provider = new EnaElectricityProvider();

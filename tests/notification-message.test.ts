@@ -22,3 +22,22 @@ test("formatOutagesForTelegram groups messages by region and date", () => {
   assert.match(messages[1] ?? "", /Երևան քաղաք/);
   assert.match(messages[1] ?? "", /Նոր Նորք 1/);
 });
+
+test("formatOutagesForTelegram escapes Telegram Markdown in dynamic text", () => {
+  const messages = formatOutagesForTelegram([
+    {
+      eventId: 1,
+      windowId: 10,
+      title: "Test",
+      dateText: "ապրիլի_18",
+      eventDate: new Date("2026-04-18T12:00:00Z"),
+      regionName: "Երևան *քաղաք*",
+      timeSlot: "10:00-12:00",
+      addresses: ["Նոր_Նորք `1`"],
+    },
+  ]);
+
+  assert.match(messages[1] ?? "", /Երևան \\\*քաղաք\\\*/);
+  assert.match(messages[1] ?? "", /ապրիլի\\_18/);
+  assert.match(messages[1] ?? "", /Նոր\\_Նորք \\`1\\`/);
+});

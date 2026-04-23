@@ -24,3 +24,7 @@ export const SUBSCRIPTION_PROMPT_TEXT =
   "Մուտքագրեք հասցե կամ մարզ, որի համար ցանկանում եք ստանալ ծանուցումներ։";
 
 export const NO_RESULTS_TEXT = "Որևէ արդյունք չի գտնվել։";
+
+export function escapeTelegramMarkdown(value: string): string {
+  return value.replace(/([_*`\[])/g, "\\$1");
+}
